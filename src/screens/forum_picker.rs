@@ -1,0 +1,127 @@
+use crate::app_simple::{AddForumState, App, ForumPickerMode};
+use ratatui::{
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+    Frame,
+};
+
+pub fn draw(frame: &mut Frame, app: &mut App) {
+    match app.forum_picker_mode {
+        ForumPickerMode::List => draw_list(frame, app),
+        ForumPickerMode::AddForum => draw_add_forum(frame, app),
+    }
+}
+
+fn draw_list(frame: &mut Frame, app: &mut App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(frame.area());
+
+    let forum_items: Vec<ListItem> = app
+        .config
+        .forums
+        .iter()
+        .map(|forum| {
+            let selected_marker = if app.config.current.selected.as_ref() == Some(&forum.id) {
+                "★ "
+            } else {
+                "  "
+            };
+            ListItem::new(Line::from(vec![
+                Span::raw(selected_marker),
+                Span::styled(&forum.name, Style::default().fg(Color::Cyan)),
+                Span::raw(" - "),
+                Span::raw(&forum.url),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(forum_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Select Forum")
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("➤ ");
+
+    frame.render_stateful_widget(list, chunks[0], &mut app.forum_picker_list_state);
+
+    let footer = Paragraph::new("j/k: navigate | Enter: select forum | a: add forum | d: delete forum | 1: main screen | q: quit")
+        .style(Style::default().fg(Color::DarkGray));
+
+    frame.render_widget(footer, chunks[1]);
+}
+
+fn draw_add_forum(frame: &mut Frame, app: &mut App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(10),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(frame.area());
+
+    let title = Paragraph::new("Add New Forum")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    frame.render_widget(title, chunks[0]);
+
+    let instructions = Paragraph::new(
+        "To get your API credentials:\n\
+         1. Visit: [forum-url]/u/[username]/preferences/security\n\
+         2. Click 'New API Key'\n\
+         3. Enter a description (e.g., 'discourse-tui')\n\
+         4. Copy your key\n\n\
+         Leave API key blank for read-only access to public content."
+    )
+    .block(Block::default().borders(Borders::ALL).title("Instructions"))
+    .style(Style::default().fg(Color::Gray));
+    frame.render_widget(instructions, chunks[1]);
+
+    let field_names = ["Forum Name", "Forum URL", "API Key (optional)", "Username (optional)"];
+    let field_values = [
+        &app.add_forum_state.name,
+        &app.add_forum_state.url,
+        &app.add_forum_state.api_key,
+        &app.add_forum_state.username,
+    ];
+
+    for (idx, (name, value)) in field_names.iter().zip(field_values.iter()).enumerate() {
+        let is_active = app.add_forum_state.active_field == idx;
+        let border_color = if is_active { Color::Cyan } else { Color::White };
+
+        let display_value = if idx == 2 && !value.is_empty() {
+            "*".repeat(value.len())
+        } else {
+            value.to_string()
+        };
+
+        let input = Paragraph::new(display_value)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(*name)
+                    .border_style(Style::default().fg(border_color)),
+            );
+        frame.render_widget(input, chunks[2 + idx]);
+    }
+
+    let footer = Paragraph::new("Tab: next field | Enter: save | Esc: cancel | Type to enter text")
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(footer, chunks[7]);
+}
