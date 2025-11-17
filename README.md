@@ -2,6 +2,24 @@
 
 A terminal user interface for browsing Discourse forums.
 
+## Screenshots
+
+**Forum Picker**
+
+![Forum Picker](screenshots/discourse-tui-forum-picker.png)
+
+**Add Forum**
+
+![Add Forum](screenshots/discourse-tui-add-forum.png)
+
+**Main Screen**
+
+![Main Screen](screenshots/discourse-tui-main.png)
+
+**Topic View**
+
+![Topic View](screenshots/discourse-tui-topic.png)
+
 ## Features
 
 - Browse multiple Discourse instances

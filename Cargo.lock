@@ -183,6 +183,7 @@ dependencies = [
 [[package]]
 name = "discourse-api-rs"
 version = "0.20251116.0"
+source = "git+https://github.com/ducks/discourse-api-rs#311a882043ca05185ef27d71b7202fec5f725e67"
 dependencies = [
  "reqwest",
  "serde",
