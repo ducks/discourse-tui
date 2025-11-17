@@ -5,7 +5,7 @@ mod screens;
 use app_simple::{App, AppScreen, ForumPickerMode, PaneFocus, SidebarItem, ViewFilter};
 use config::Forum;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -17,7 +17,19 @@ use std::io;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+
+    // Enable keyboard enhancement flags for better modifier key detection
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        )
+    )?;
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -28,7 +40,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        PopKeyboardEnhancementFlags
     )?;
     terminal.show_cursor()?;
 
@@ -354,21 +367,21 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
 
                 match app.screen {
-                    AppScreen::ForumPicker => handle_forum_picker_input(key.code, app).await?,
-                    AppScreen::MainScreen => handle_main_screen_input(key.code, app).await?,
-                    AppScreen::TopicView => handle_topic_view_input(key.code, app).await?,
-                    AppScreen::PostView => handle_post_view_input(key.code, app)?,
-                    AppScreen::ChatChannels => handle_chat_channels_input(key.code, app).await?,
-                    AppScreen::ChatMessages => handle_chat_messages_input(key.code, app).await?,
+                    AppScreen::ForumPicker => handle_forum_picker_input(key, app).await?,
+                    AppScreen::MainScreen => handle_main_screen_input(key, app).await?,
+                    AppScreen::TopicView => handle_topic_view_input(key, app).await?,
+                    AppScreen::PostView => handle_post_view_input(key, app)?,
+                    AppScreen::ChatChannels => handle_chat_channels_input(key, app).await?,
+                    AppScreen::ChatMessages => handle_chat_messages_input(key, app).await?,
                 }
             }
         }
     }
 }
 
-async fn handle_forum_picker_input(key: KeyCode, app: &mut App) -> io::Result<()> {
+async fn handle_forum_picker_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
     match app.forum_picker_mode {
-        ForumPickerMode::List => match key {
+        ForumPickerMode::List => match key.code {
             KeyCode::Char('q') => std::process::exit(0),
             KeyCode::Char('1') => {
                 // Only go to main screen if we have a selected forum
@@ -425,7 +438,7 @@ async fn handle_forum_picker_input(key: KeyCode, app: &mut App) -> io::Result<()
             }
             _ => {}
         },
-        ForumPickerMode::AddForum => match key {
+        ForumPickerMode::AddForum => match key.code {
             KeyCode::Char('q') => std::process::exit(0),
             KeyCode::Char(c) => {
                 let field = match app.add_forum_state.active_field {
@@ -496,8 +509,8 @@ async fn handle_forum_picker_input(key: KeyCode, app: &mut App) -> io::Result<()
     Ok(())
 }
 
-async fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    match key {
+async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
+    match key.code {
         KeyCode::Char('q') => std::process::exit(0),
         KeyCode::Char('2') => {
             // Load chat channels and go to chat view
@@ -566,15 +579,35 @@ async fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()>
     Ok(())
 }
 
-async fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    if app.topic_composer_focused {
-        // Handle composer input
-        match key {
+async fn handle_topic_view_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
+    if app.topic_composer_visible && app.topic_composer_insert_mode {
+        // INSERT MODE: Can type
+        match key.code {
             KeyCode::Esc => {
-                app.topic_composer_focused = false;
+                // Exit insert mode, back to normal mode
+                app.topic_composer_insert_mode = false;
             }
             KeyCode::Enter => {
-                // Send reply
+                // Enter adds newline in insert mode
+                app.topic_composer_input.push('\n');
+            }
+            KeyCode::Backspace => {
+                app.topic_composer_input.pop();
+            }
+            KeyCode::Char(c) => {
+                app.topic_composer_input.push(c);
+            }
+            _ => {}
+        }
+    } else if app.topic_composer_visible {
+        // NORMAL MODE: Composer visible but can't type
+        match key.code {
+            KeyCode::Char('i') => {
+                // Enter insert mode
+                app.topic_composer_insert_mode = true;
+            }
+            KeyCode::Enter => {
+                // Send message in normal mode
                 if !app.topic_composer_input.trim().is_empty() {
                     let topic_id = app.topics.get(app.selected_topic_idx).map(|t| t.id as u64);
                     if let Some(topic_id) = topic_id {
@@ -585,7 +618,8 @@ async fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> 
                             eprintln!("Failed to send reply: {}", e);
                         } else {
                             app.topic_composer_input.clear();
-                            app.topic_composer_focused = false;
+                            app.topic_composer_visible = false;
+                            app.topic_composer_insert_mode = false;
                             app.topic_reply_to_post_number = None;
                             // Refresh topic to show our new post
                             let _ = load_topic_posts(app, topic_id).await;
@@ -593,34 +627,84 @@ async fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> 
                     }
                 }
             }
-            KeyCode::Backspace => {
-                app.topic_composer_input.pop();
+            KeyCode::Esc => {
+                // Hide composer
+                app.topic_composer_visible = false;
+                app.topic_composer_insert_mode = false;
             }
-            KeyCode::Char(c) => {
-                app.topic_composer_input.push(c);
+            _ => {}
+        }
+    } else if app.topic_visual_mode {
+        // Handle visual mode
+        match key.code {
+            KeyCode::Char('q') => {
+                // Quote selected post
+                if let Some(idx) = app.topic_posts_list_state.selected() {
+                    if let Some(post) = app.current_topic_posts.get(idx) {
+                        if let Some(topic) = app.topics.get(app.selected_topic_idx) {
+                            // Construct quote
+                            let content = post.raw.as_deref().unwrap_or(&post.cooked);
+                            let quote = format!(
+                                "[quote=\"{}, post:{}, topic:{}\"]\n{}\n[/quote]\n\n",
+                                post.username,
+                                post.post_number,
+                                topic.id,
+                                content
+                            );
+
+                            // Pre-fill composer with quote
+                            app.topic_composer_input = quote;
+                            app.topic_reply_to_post_number = Some(post.post_number);
+                            app.topic_visual_mode = false;
+                            app.topic_visual_selected_post = None;
+                            app.topic_composer_visible = true;
+                            app.topic_composer_insert_mode = true;
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('v') | KeyCode::Esc => {
+                // Exit visual mode
+                app.topic_visual_mode = false;
+                app.topic_visual_selected_post = None;
             }
             _ => {}
         }
     } else {
         // Handle navigation
-        match key {
+        match key.code {
             KeyCode::Char('q') => std::process::exit(0),
             KeyCode::Esc => {
                 app.goto_screen(AppScreen::MainScreen);
+            }
+            KeyCode::Char('v') => {
+                // Enter visual mode
+                app.topic_visual_mode = true;
+                app.topic_visual_selected_post = app.topic_posts_list_state.selected();
+            }
+            KeyCode::Char(' ') => {
+                // Show composer for reply
+                app.topic_reply_to_post_number = app.topic_posts_list_state.selected()
+                    .and_then(|idx| app.current_topic_posts.get(idx))
+                    .map(|post| post.post_number);
+                app.topic_composer_visible = true;
+                app.topic_composer_insert_mode = false; // Start in normal mode
             }
             KeyCode::Char('r') => {
                 // Reply to selected post
                 app.topic_reply_to_post_number = app.topic_posts_list_state.selected()
                     .and_then(|idx| app.current_topic_posts.get(idx))
                     .map(|post| post.post_number);
-                app.topic_composer_focused = true;
+                app.topic_composer_visible = true;
+                app.topic_composer_insert_mode = false; // Start in normal mode
             }
             KeyCode::Char('R') => {
                 // Reply to topic (post #1)
                 app.topic_reply_to_post_number = Some(1);
-                app.topic_composer_focused = true;
+                app.topic_composer_visible = true;
+                app.topic_composer_insert_mode = false; // Start in normal mode
             }
-            KeyCode::Char(' ') | KeyCode::Enter => {
+            KeyCode::Enter => {
                 // Open full post view
                 app.post_scroll_offset = 0;
                 app.goto_screen(AppScreen::PostView);
@@ -645,8 +729,8 @@ async fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> 
     Ok(())
 }
 
-fn handle_post_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    match key {
+fn handle_post_view_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
+    match key.code {
         KeyCode::Char('q') => std::process::exit(0),
         KeyCode::Esc => {
             app.goto_screen(AppScreen::TopicView);
@@ -756,8 +840,8 @@ async fn apply_filter(app: &mut App, filter: ViewFilter) -> Result<(), Box<dyn s
     Ok(())
 }
 
-async fn handle_chat_channels_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    match key {
+async fn handle_chat_channels_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
+    match key.code {
         KeyCode::Char('q') => std::process::exit(0),
         KeyCode::Esc => {
             app.goto_screen(AppScreen::MainScreen);
@@ -793,28 +877,17 @@ async fn handle_chat_channels_input(key: KeyCode, app: &mut App) -> io::Result<(
     Ok(())
 }
 
-async fn handle_chat_messages_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    if app.chat_composer_focused {
-        // Handle composer input
-        match key {
+async fn handle_chat_messages_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
+    if app.chat_composer_visible && app.chat_composer_insert_mode {
+        // INSERT MODE: Can type
+        match key.code {
             KeyCode::Esc => {
-                app.chat_composer_focused = false;
+                // Exit insert mode, back to normal mode
+                app.chat_composer_insert_mode = false;
             }
             KeyCode::Enter => {
-                // Send message
-                if !app.chat_composer_input.trim().is_empty() {
-                    if let Some(channel_id) = app.selected_channel_id {
-                        let message = app.chat_composer_input.clone();
-                        if let Err(e) = send_chat_message(app, channel_id, &message).await {
-                            eprintln!("Failed to send message: {}", e);
-                        } else {
-                            app.chat_composer_input.clear();
-                            app.chat_composer_focused = false;
-                            // Refresh messages to show our new message
-                            let _ = load_chat_messages(app, channel_id).await;
-                        }
-                    }
-                }
+                // Enter adds newline in insert mode
+                app.chat_composer_input.push('\n');
             }
             KeyCode::Backspace => {
                 app.chat_composer_input.pop();
@@ -824,15 +897,48 @@ async fn handle_chat_messages_input(key: KeyCode, app: &mut App) -> io::Result<(
             }
             _ => {}
         }
+    } else if app.chat_composer_visible {
+        // NORMAL MODE: Composer visible but can't type
+        match key.code {
+            KeyCode::Char('i') => {
+                // Enter insert mode
+                app.chat_composer_insert_mode = true;
+            }
+            KeyCode::Enter => {
+                // Send message in normal mode
+                if !app.chat_composer_input.trim().is_empty() {
+                    if let Some(channel_id) = app.selected_channel_id {
+                        let message = app.chat_composer_input.clone();
+                        if let Err(e) = send_chat_message(app, channel_id, &message).await {
+                            eprintln!("Failed to send message: {}", e);
+                        } else {
+                            app.chat_composer_input.clear();
+                            app.chat_composer_visible = false;
+                            app.chat_composer_insert_mode = false;
+                            // Refresh messages to show our new message
+                            let _ = load_chat_messages(app, channel_id).await;
+                        }
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                // Hide composer
+                app.chat_composer_visible = false;
+                app.chat_composer_insert_mode = false;
+            }
+            _ => {}
+        }
     } else {
         // Handle navigation
-        match key {
+        match key.code {
             KeyCode::Char('q') => std::process::exit(0),
             KeyCode::Esc => {
                 app.goto_screen(AppScreen::ChatChannels);
             }
-            KeyCode::Char('i') => {
-                app.chat_composer_focused = true;
+            KeyCode::Char('i') | KeyCode::Char(' ') => {
+                // Show composer
+                app.chat_composer_visible = true;
+                app.chat_composer_insert_mode = false; // Start in normal mode
             }
             KeyCode::Char('r') => {
                 // Refresh messages
