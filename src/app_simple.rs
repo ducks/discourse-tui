@@ -1,6 +1,7 @@
 use crate::config::Config;
 use discourse_api_rs::{Category, ChatChannel, ChatMessage, Post};
 use ratatui::widgets::ListState;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppScreen {
@@ -78,6 +79,7 @@ pub struct App {
 
     // Post view state
     pub post_scroll_offset: usize,
+    pub post_image_urls: HashMap<u64, Vec<String>>,
 
     // Chat state
     pub chat_channels: Vec<ChatChannel>,
@@ -101,9 +103,11 @@ pub enum ForumPickerMode {
 pub struct AddForumState {
     pub name: String,
     pub url: String,
+    pub user_api_key: String,
     pub api_key: String,
     pub username: String,
     pub active_field: usize,
+    pub error_message: Option<String>,
 }
 
 impl App {
@@ -166,6 +170,7 @@ impl App {
             topic_visual_mode: false,
             topic_visual_selected_post: None,
             post_scroll_offset: 0,
+            post_image_urls: HashMap::new(),
             chat_channels: vec![],
             chat_channels_list_state,
             current_chat_messages: vec![],

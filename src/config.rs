@@ -19,8 +19,11 @@ pub struct Forum {
     pub id: String,
     pub name: String,
     pub url: String,
+    // Admin API Key (requires admin permissions)
     pub api_key: Option<String>,
     pub username: Option<String>,
+    // User API Key (any user can generate)
+    pub user_api_key: Option<String>,
 }
 
 impl Config {
