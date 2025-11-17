@@ -39,6 +39,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let forum = app
+        .config
+        .get_current_forum()
+        .ok_or("No forum selected")?;
+
+    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+        format!("https://{}", forum.url)
+    } else {
+        forum.url.clone()
+    };
+
+    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+        DiscourseClient::with_api_key(&url, api_key, username)
+    } else {
+        DiscourseClient::new(&url)
+    };
+
+    let topic_response = client.get_topic(topic_id).await?;
+    app.current_topic_posts = topic_response.post_stream.posts;
+    app.topic_posts_list_state.select(Some(0));
+
+    Ok(())
+}
+
 async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure URL has protocol
     let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
@@ -191,7 +216,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 
             match app.screen {
                 AppScreen::ForumPicker => handle_forum_picker_input(key.code, app).await?,
-                AppScreen::MainScreen => handle_main_screen_input(key.code, app)?,
+                AppScreen::MainScreen => handle_main_screen_input(key.code, app).await?,
                 AppScreen::TopicView => handle_topic_view_input(key.code, app)?,
             }
         }
@@ -323,7 +348,7 @@ async fn handle_forum_picker_input(key: KeyCode, app: &mut App) -> io::Result<()
     Ok(())
 }
 
-fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()> {
+async fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()> {
     match key {
         KeyCode::Char('q') => std::process::exit(0),
         KeyCode::Char('5') => {
@@ -366,7 +391,13 @@ fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()> {
                 }
             } else {
                 app.selected_topic_idx = app.topics_state.selected().unwrap_or(0);
-                app.goto_screen(AppScreen::TopicView);
+                if let Some(topic) = app.topics.get(app.selected_topic_idx) {
+                    if let Err(e) = load_topic_posts(app, topic.id as u64).await {
+                        eprintln!("Failed to load topic posts: {}", e);
+                    } else {
+                        app.goto_screen(AppScreen::TopicView);
+                    }
+                }
             }
         }
         KeyCode::Esc => {
@@ -382,6 +413,20 @@ fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
         KeyCode::Char('q') => std::process::exit(0),
         KeyCode::Esc => {
             app.goto_screen(AppScreen::MainScreen);
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let len = app.current_topic_posts.len();
+            if len > 0 {
+                let i = app.topic_posts_list_state.selected().unwrap_or(0);
+                app.topic_posts_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let len = app.current_topic_posts.len();
+            if len > 0 {
+                let i = app.topic_posts_list_state.selected().unwrap_or(0);
+                app.topic_posts_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            }
         }
         _ => {}
     }

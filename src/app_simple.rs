@@ -1,5 +1,5 @@
 use crate::config::Config;
-use discourse_api_rs::Category;
+use discourse_api_rs::{Category, Post};
 use ratatui::widgets::ListState;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,6 +64,8 @@ pub struct App {
 
     // Topic view state
     pub selected_topic_idx: usize,
+    pub current_topic_posts: Vec<Post>,
+    pub topic_posts_list_state: ListState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,6 +110,9 @@ impl App {
         let mut topics_state = ListState::default();
         topics_state.select(Some(0));
 
+        let mut topic_posts_list_state = ListState::default();
+        topic_posts_list_state.select(Some(0));
+
         Ok(Self {
             screen,
             config,
@@ -123,6 +128,8 @@ impl App {
             all_topics: vec![],
             categories: vec![],
             selected_topic_idx: 0,
+            current_topic_posts: vec![],
+            topic_posts_list_state,
         })
     }
 
