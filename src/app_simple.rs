@@ -70,8 +70,11 @@ pub struct App {
     pub current_topic_posts: Vec<Post>,
     pub topic_posts_list_state: ListState,
     pub topic_composer_input: String,
-    pub topic_composer_focused: bool,
+    pub topic_composer_visible: bool,
+    pub topic_composer_insert_mode: bool,
     pub topic_reply_to_post_number: Option<u32>,
+    pub topic_visual_mode: bool,
+    pub topic_visual_selected_post: Option<usize>,
 
     // Post view state
     pub post_scroll_offset: usize,
@@ -84,7 +87,8 @@ pub struct App {
     pub selected_channel_id: Option<u64>,
     pub last_message_poll: std::time::Instant,
     pub chat_composer_input: String,
-    pub chat_composer_focused: bool,
+    pub chat_composer_visible: bool,
+    pub chat_composer_insert_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -156,8 +160,11 @@ impl App {
             current_topic_posts: vec![],
             topic_posts_list_state,
             topic_composer_input: String::new(),
-            topic_composer_focused: false,
+            topic_composer_visible: false,
+            topic_composer_insert_mode: false,
             topic_reply_to_post_number: None,
+            topic_visual_mode: false,
+            topic_visual_selected_post: None,
             post_scroll_offset: 0,
             chat_channels: vec![],
             chat_channels_list_state,
@@ -166,7 +173,8 @@ impl App {
             selected_channel_id: None,
             last_message_poll: std::time::Instant::now(),
             chat_composer_input: String::new(),
-            chat_composer_focused: false,
+            chat_composer_visible: false,
+            chat_composer_insert_mode: false,
         })
     }
 

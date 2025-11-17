@@ -8,13 +8,14 @@ use ratatui::{
 };
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    let composer_height = if app.chat_composer_visible { 5 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(0),     // Messages
-            Constraint::Length(3),  // Composer
-            Constraint::Length(1),  // Help
+            Constraint::Length(3),              // Header
+            Constraint::Min(0),                 // Messages
+            Constraint::Length(composer_height), // Composer (hidden or visible)
+            Constraint::Length(1),              // Help
         ])
         .split(frame.area());
 
@@ -79,25 +80,34 @@ pub fn draw(frame: &mut Frame, app: &App) {
         &mut app.chat_messages_list_state.clone(),
     );
 
-    // Composer input
-    let composer_style = if app.chat_composer_focused {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
+    // Composer input (only render if visible)
+    if app.chat_composer_visible {
+        let (composer_style, composer_title) = if app.chat_composer_insert_mode {
+            (
+                Style::default().fg(Color::Yellow),
+                "Message -- INSERT -- (Esc: normal mode, Enter: newline)"
+            )
+        } else {
+            (
+                Style::default().fg(Color::Green),
+                "Message -- NORMAL -- (i: insert, Enter: send, Esc: hide)"
+            )
+        };
 
-    let composer = ratatui::widgets::Paragraph::new(app.chat_composer_input.as_str())
-        .block(
-            Block::default()
-                .title("Message (i: focus, Enter: send)")
-                .borders(Borders::ALL)
-                .border_style(composer_style),
-        );
+        let composer = ratatui::widgets::Paragraph::new(app.chat_composer_input.as_str())
+            .block(
+                Block::default()
+                    .title(composer_title)
+                    .borders(Borders::ALL)
+                    .border_style(composer_style),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: false });
 
-    frame.render_widget(composer, chunks[2]);
+        frame.render_widget(composer, chunks[2]);
+    }
 
     let help = Line::from(vec![Span::raw(
-        "j/k: scroll | i: compose | r: refresh | Esc: back | q: quit",
+        "j/k: scroll | SPACE/i: compose | r: refresh | Esc: back | q: quit",
     )]);
 
     frame.render_widget(help, chunks[3]);
