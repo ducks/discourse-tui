@@ -62,16 +62,20 @@ fn draw_list(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_add_forum(frame: &mut Frame, app: &mut App) {
+    let error_height = if app.add_forum_state.error_message.is_some() { 3 } else { 0 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(10),
+            Constraint::Length(9),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(error_height),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -82,21 +86,22 @@ fn draw_add_forum(frame: &mut Frame, app: &mut App) {
     frame.render_widget(title, chunks[0]);
 
     let instructions = Paragraph::new(
-        "To get your API credentials:\n\
+        "User API Key (recommended):\n\
          1. Visit: [forum-url]/u/[username]/preferences/security\n\
-         2. Click 'New API Key'\n\
-         3. Enter a description (e.g., 'discourse-tui')\n\
-         4. Copy your key\n\n\
-         Leave API key blank for read-only access to public content."
+         2. Click 'New API Key' (any user can generate)\n\
+         3. Enter description (e.g., 'discourse-tui')\n\n\
+         Admin API Key (requires admin):\n\
+         Provide both API Key + Username fields"
     )
     .block(Block::default().borders(Borders::ALL).title("Instructions"))
     .style(Style::default().fg(Color::Gray));
     frame.render_widget(instructions, chunks[1]);
 
-    let field_names = ["Forum Name", "Forum URL", "API Key (optional)", "Username (optional)"];
+    let field_names = ["Forum Name", "Forum URL", "User API Key (optional)", "Admin API Key (optional)", "Username (for admin key)"];
     let field_values = [
         &app.add_forum_state.name,
         &app.add_forum_state.url,
+        &app.add_forum_state.user_api_key,
         &app.add_forum_state.api_key,
         &app.add_forum_state.username,
     ];
@@ -105,7 +110,8 @@ fn draw_add_forum(frame: &mut Frame, app: &mut App) {
         let is_active = app.add_forum_state.active_field == idx;
         let border_color = if is_active { Color::Cyan } else { Color::White };
 
-        let display_value = if idx == 2 && !value.is_empty() {
+        // Mask User API Key (field 2) and Admin API Key (field 3)
+        let display_value = if (idx == 2 || idx == 3) && !value.is_empty() {
             "*".repeat(value.len())
         } else {
             value.to_string()
@@ -121,7 +127,20 @@ fn draw_add_forum(frame: &mut Frame, app: &mut App) {
         frame.render_widget(input, chunks[2 + idx]);
     }
 
+    // Error message display
+    if let Some(error) = &app.add_forum_state.error_message {
+        let error_widget = Paragraph::new(error.as_str())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Error")
+                    .border_style(Style::default().fg(Color::Red)),
+            )
+            .style(Style::default().fg(Color::Red));
+        frame.render_widget(error_widget, chunks[7]);
+    }
+
     let footer = Paragraph::new("Tab: next field | Enter: save | Esc: cancel | Type to enter text")
         .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, chunks[7]);
+    frame.render_widget(footer, chunks[9]);
 }

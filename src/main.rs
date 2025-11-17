@@ -1,5 +1,6 @@
 mod app_simple;
 mod config;
+mod images;
 mod screens;
 
 use app_simple::{App, AppScreen, ForumPickerMode, PaneFocus, SidebarItem, ViewFilter};
@@ -12,6 +13,27 @@ use crossterm::{
 use discourse_api_rs::DiscourseClient;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
+
+fn create_client(forum: &Forum) -> DiscourseClient {
+    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+        format!("https://{}", forum.url)
+    } else {
+        forum.url.clone()
+    };
+
+    // Prefer User API Key (any user can generate)
+    if let Some(user_api_key) = &forum.user_api_key {
+        return DiscourseClient::with_user_api_key(&url, user_api_key);
+    }
+
+    // Fall back to Admin API Key (requires admin permissions)
+    if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+        return DiscourseClient::with_api_key(&url, api_key, username);
+    }
+
+    // No auth
+    DiscourseClient::new(&url)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -80,18 +102,7 @@ async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn st
         .get_current_forum()
         .ok_or("No forum selected")?;
 
-    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-        format!("https://{}", forum.url)
-    } else {
-        forum.url.clone()
-    };
-
-    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-        DiscourseClient::with_api_key(&url, api_key, username)
-    } else {
-        DiscourseClient::new(&url)
-    };
-
+    let client = create_client(forum);
     let topic_response = client.get_topic(topic_id).await?;
     app.current_topic_posts = topic_response.post_stream.posts;
 
@@ -107,18 +118,7 @@ async fn load_chat_channels(app: &mut App) -> Result<(), Box<dyn std::error::Err
         .get_current_forum()
         .ok_or("No forum selected")?;
 
-    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-        format!("https://{}", forum.url)
-    } else {
-        forum.url.clone()
-    };
-
-    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-        DiscourseClient::with_api_key(&url, api_key, username)
-    } else {
-        return Err("Chat requires API authentication".into());
-    };
-
+    let client = create_client(forum);
     let response = client.get_user_channels().await?;
 
     // Combine public and DM channels
@@ -149,18 +149,7 @@ async fn send_chat_message(
         .get_current_forum()
         .ok_or("No forum selected")?;
 
-    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-        format!("https://{}", forum.url)
-    } else {
-        forum.url.clone()
-    };
-
-    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-        DiscourseClient::with_api_key(&url, api_key, username)
-    } else {
-        return Err("Chat requires API authentication".into());
-    };
-
+    let client = create_client(forum);
     client.send_chat_message(channel_id, message).await?;
 
     Ok(())
@@ -172,18 +161,7 @@ async fn load_chat_messages(app: &mut App, channel_id: u64) -> Result<(), Box<dy
         .get_current_forum()
         .ok_or("No forum selected")?;
 
-    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-        format!("https://{}", forum.url)
-    } else {
-        forum.url.clone()
-    };
-
-    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-        DiscourseClient::with_api_key(&url, api_key, username)
-    } else {
-        return Err("Chat requires API authentication".into());
-    };
-
+    let client = create_client(forum);
     let response = client.get_channel_messages(channel_id).await?;
     app.current_chat_messages = response.messages;
     app.selected_channel_id = Some(channel_id);
@@ -207,37 +185,35 @@ async fn create_post_reply(
         .get_current_forum()
         .ok_or("No forum selected")?;
 
-    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-        format!("https://{}", forum.url)
-    } else {
-        forum.url.clone()
-    };
-
-    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-        DiscourseClient::with_api_key(&url, api_key, username)
-    } else {
-        return Err("Posting requires API authentication".into());
-    };
-
+    let client = create_client(forum);
     client.create_post(topic_id, message, reply_to_post_number).await?;
 
     Ok(())
 }
 
+fn load_post_images(app: &mut App, post_id: u64) {
+    // Find the post
+    let post = app.current_topic_posts.iter().find(|p| p.id == post_id);
+    if post.is_none() {
+        return;
+    }
+    let post = post.unwrap();
+
+    // Extract image URLs from HTML
+    let html = &post.cooked;
+    let image_urls = images::extract_image_urls(html);
+
+    if image_urls.is_empty() {
+        return;
+    }
+
+    // Store URLs for display as placeholders
+    // TODO: Implement actual image rendering with ratatui-image
+    app.post_image_urls.insert(post_id, image_urls);
+}
+
 async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std::error::Error>> {
-    // Ensure URL has protocol
-    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-        format!("https://{}", forum.url)
-    } else {
-        forum.url.clone()
-    };
-
-    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-        DiscourseClient::with_api_key(&url, api_key, username)
-    } else {
-        DiscourseClient::new(&url)
-    };
-
+    let client = create_client(forum);
     let latest = client.get_latest().await?;
     let categories = client.get_categories().await?;
 
@@ -463,35 +439,49 @@ async fn handle_forum_picker_input(key: event::KeyEvent, app: &mut App) -> io::R
         ForumPickerMode::AddForum => match key.code {
             KeyCode::Char('q') => std::process::exit(0),
             KeyCode::Char(c) => {
+                // Clear error when user starts typing
+                app.add_forum_state.error_message = None;
                 let field = match app.add_forum_state.active_field {
                     0 => &mut app.add_forum_state.name,
                     1 => &mut app.add_forum_state.url,
-                    2 => &mut app.add_forum_state.api_key,
-                    3 => &mut app.add_forum_state.username,
+                    2 => &mut app.add_forum_state.user_api_key,
+                    3 => &mut app.add_forum_state.api_key,
+                    4 => &mut app.add_forum_state.username,
                     _ => return Ok(()),
                 };
                 field.push(c);
             }
             KeyCode::Backspace => {
+                // Clear error when user edits
+                app.add_forum_state.error_message = None;
                 let field = match app.add_forum_state.active_field {
                     0 => &mut app.add_forum_state.name,
                     1 => &mut app.add_forum_state.url,
-                    2 => &mut app.add_forum_state.api_key,
-                    3 => &mut app.add_forum_state.username,
+                    2 => &mut app.add_forum_state.user_api_key,
+                    3 => &mut app.add_forum_state.api_key,
+                    4 => &mut app.add_forum_state.username,
                     _ => return Ok(()),
                 };
                 field.pop();
             }
             KeyCode::Tab => {
-                app.add_forum_state.active_field = (app.add_forum_state.active_field + 1) % 4;
+                app.add_forum_state.active_field = (app.add_forum_state.active_field + 1) % 5;
             }
             KeyCode::Enter => {
                 if !app.add_forum_state.name.is_empty() && !app.add_forum_state.url.is_empty() {
+                    // Clear any previous error
+                    app.add_forum_state.error_message = None;
+
                     let id = app.add_forum_state.name.to_lowercase().replace(' ', "-");
                     let forum = Forum {
                         id: id.clone(),
                         name: app.add_forum_state.name.clone(),
                         url: app.add_forum_state.url.clone(),
+                        user_api_key: if app.add_forum_state.user_api_key.is_empty() {
+                            None
+                        } else {
+                            Some(app.add_forum_state.user_api_key.clone())
+                        },
                         api_key: if app.add_forum_state.api_key.is_empty() {
                             None
                         } else {
@@ -509,12 +499,11 @@ async fn handle_forum_picker_input(key: event::KeyEvent, app: &mut App) -> io::R
 
                     // Load forum data
                     if let Err(e) = load_forum_data(app, &forum).await {
-                        eprintln!("Failed to load forum data: {:?}", e);
-                        eprintln!("Forum: url={}, has_api_key={}, has_username={}",
-                            forum.url,
-                            forum.api_key.is_some(),
-                            forum.username.is_some()
-                        );
+                        // Display error in UI instead of eprintln
+                        app.add_forum_state.error_message = Some(format!("Failed to load forum: {}", e));
+                        // Remove the forum from config since it failed
+                        app.config.remove_forum(&forum.id);
+                        let _ = app.config.save();
                     } else {
                         app.goto_screen(AppScreen::MainScreen);
                     }
@@ -729,6 +718,14 @@ async fn handle_topic_view_input(key: event::KeyEvent, app: &mut App) -> io::Res
             KeyCode::Enter => {
                 // Open full post view
                 app.post_scroll_offset = 0;
+
+                // Load images for the selected post
+                if let Some(idx) = app.topic_posts_list_state.selected() {
+                    if let Some(post) = app.current_topic_posts.get(idx) {
+                        load_post_images(app, post.id);
+                    }
+                }
+
                 app.goto_screen(AppScreen::PostView);
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -794,18 +791,7 @@ async fn apply_filter(app: &mut App, filter: ViewFilter) -> Result<(), Box<dyn s
                     .get_current_forum()
                     .ok_or("No forum selected")?;
 
-                let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
-                    format!("https://{}", forum.url)
-                } else {
-                    forum.url.clone()
-                };
-
-                let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
-                    DiscourseClient::with_api_key(&url, api_key, username)
-                } else {
-                    DiscourseClient::new(&url)
-                };
-
+                let client = create_client(forum);
                 let category_response = client.get_category_topics(category.id).await?;
 
                 // Convert API topics to TUI topics
