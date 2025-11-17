@@ -66,6 +66,74 @@ async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn st
     Ok(())
 }
 
+async fn load_chat_channels(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    let forum = app
+        .config
+        .get_current_forum()
+        .ok_or("No forum selected")?;
+
+    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+        format!("https://{}", forum.url)
+    } else {
+        forum.url.clone()
+    };
+
+    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+        DiscourseClient::with_api_key(&url, api_key, username)
+    } else {
+        return Err("Chat requires API authentication".into());
+    };
+
+    let response = client.get_user_channels().await?;
+
+    // Combine public and DM channels
+    let mut all_channels = Vec::new();
+    if let Some(public) = response.public_channels {
+        all_channels.extend(public);
+    }
+    if let Some(dms) = response.direct_message_channels {
+        all_channels.extend(dms);
+    }
+
+    app.chat_channels = all_channels;
+
+    if !app.chat_channels.is_empty() {
+        app.chat_channels_list_state.select(Some(0));
+    }
+
+    Ok(())
+}
+
+async fn load_chat_messages(app: &mut App, channel_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let forum = app
+        .config
+        .get_current_forum()
+        .ok_or("No forum selected")?;
+
+    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+        format!("https://{}", forum.url)
+    } else {
+        forum.url.clone()
+    };
+
+    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+        DiscourseClient::with_api_key(&url, api_key, username)
+    } else {
+        return Err("Chat requires API authentication".into());
+    };
+
+    let response = client.get_channel_messages(channel_id).await?;
+    app.current_chat_messages = response.messages;
+    app.selected_channel_id = Some(channel_id);
+    app.last_message_poll = std::time::Instant::now();
+
+    if !app.current_chat_messages.is_empty() {
+        app.chat_messages_list_state.select(Some(0));
+    }
+
+    Ok(())
+}
+
 async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure URL has protocol
     let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
@@ -106,7 +174,7 @@ async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std
                     latest
                         .users
                         .iter()
-                        .find(|u| u.id == p.user_id)
+                        .find(|u| u.id as i64 == p.user_id)
                         .map(|u| u.username.clone())
                 })
                 .unwrap_or_else(|| "unknown".to_string());
@@ -209,19 +277,35 @@ async fn run_app<B: ratatui::backend::Backend>(
                 AppScreen::MainScreen => screens::main_screen::draw(f, app),
                 AppScreen::TopicView => screens::topic_view::draw(f, app),
                 AppScreen::PostView => screens::post_view::draw(f, app),
+                AppScreen::ChatChannels => screens::chat_channels::draw(f, app),
+                AppScreen::ChatMessages => screens::chat_messages::draw(f, app),
             }
         })?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                return Ok(());
+        // Auto-refresh chat messages every 5 seconds
+        if app.screen == AppScreen::ChatMessages {
+            if app.last_message_poll.elapsed() >= std::time::Duration::from_secs(5) {
+                if let Some(channel_id) = app.selected_channel_id {
+                    let _ = load_chat_messages(app, channel_id).await;
+                }
             }
+        }
 
-            match app.screen {
-                AppScreen::ForumPicker => handle_forum_picker_input(key.code, app).await?,
-                AppScreen::MainScreen => handle_main_screen_input(key.code, app).await?,
-                AppScreen::TopicView => handle_topic_view_input(key.code, app)?,
-                AppScreen::PostView => handle_post_view_input(key.code, app)?,
+        // Use poll with timeout so we can auto-refresh
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    return Ok(());
+                }
+
+                match app.screen {
+                    AppScreen::ForumPicker => handle_forum_picker_input(key.code, app).await?,
+                    AppScreen::MainScreen => handle_main_screen_input(key.code, app).await?,
+                    AppScreen::TopicView => handle_topic_view_input(key.code, app)?,
+                    AppScreen::PostView => handle_post_view_input(key.code, app)?,
+                    AppScreen::ChatChannels => handle_chat_channels_input(key.code, app).await?,
+                    AppScreen::ChatMessages => handle_chat_messages_input(key.code, app).await?,
+                }
             }
         }
     }
@@ -335,7 +419,12 @@ async fn handle_forum_picker_input(key: KeyCode, app: &mut App) -> io::Result<()
 
                     // Load forum data
                     if let Err(e) = load_forum_data(app, &forum).await {
-                        eprintln!("Failed to load forum data: {}", e);
+                        eprintln!("Failed to load forum data: {:?}", e);
+                        eprintln!("Forum: url={}, has_api_key={}, has_username={}",
+                            forum.url,
+                            forum.api_key.is_some(),
+                            forum.username.is_some()
+                        );
                     } else {
                         app.goto_screen(AppScreen::MainScreen);
                     }
@@ -355,6 +444,14 @@ async fn handle_forum_picker_input(key: KeyCode, app: &mut App) -> io::Result<()
 async fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()> {
     match key {
         KeyCode::Char('q') => std::process::exit(0),
+        KeyCode::Char('2') => {
+            // Load chat channels and go to chat view
+            if let Err(e) = load_chat_channels(app).await {
+                eprintln!("Failed to load chat channels: {}", e);
+            } else {
+                app.goto_screen(AppScreen::ChatChannels);
+            }
+        }
         KeyCode::Char('5') => {
             app.goto_screen(AppScreen::ForumPicker);
         }
@@ -524,7 +621,7 @@ async fn apply_filter(app: &mut App, filter: ViewFilter) -> Result<(), Box<dyn s
                                 category_response
                                     .users
                                     .iter()
-                                    .find(|u| u.id == p.user_id)
+                                    .find(|u| u.id as i64 == p.user_id)
                                     .map(|u| u.username.clone())
                             })
                             .unwrap_or_else(|| "unknown".to_string());
@@ -552,5 +649,75 @@ async fn apply_filter(app: &mut App, filter: ViewFilter) -> Result<(), Box<dyn s
         app.topics_state.select(Some(0));
     }
 
+    Ok(())
+}
+
+async fn handle_chat_channels_input(key: KeyCode, app: &mut App) -> io::Result<()> {
+    match key {
+        KeyCode::Char('q') => std::process::exit(0),
+        KeyCode::Esc => {
+            app.goto_screen(AppScreen::MainScreen);
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let len = app.chat_channels.len();
+            if len > 0 {
+                let i = app.chat_channels_list_state.selected().unwrap_or(0);
+                app.chat_channels_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let len = app.chat_channels.len();
+            if len > 0 {
+                let i = app.chat_channels_list_state.selected().unwrap_or(0);
+                app.chat_channels_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(idx) = app.chat_channels_list_state.selected() {
+                if let Some(channel) = app.chat_channels.get(idx) {
+                    let channel_id = channel.id;
+                    if let Err(e) = load_chat_messages(app, channel_id).await {
+                        eprintln!("Failed to load chat messages: {}", e);
+                    } else {
+                        app.goto_screen(AppScreen::ChatMessages);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_chat_messages_input(key: KeyCode, app: &mut App) -> io::Result<()> {
+    match key {
+        KeyCode::Char('q') => std::process::exit(0),
+        KeyCode::Esc => {
+            app.goto_screen(AppScreen::ChatChannels);
+        }
+        KeyCode::Char('r') => {
+            // Refresh messages
+            if let Some(channel_id) = app.selected_channel_id {
+                if let Err(e) = load_chat_messages(app, channel_id).await {
+                    eprintln!("Failed to refresh messages: {}", e);
+                }
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let len = app.current_chat_messages.len();
+            if len > 0 {
+                let i = app.chat_messages_list_state.selected().unwrap_or(0);
+                app.chat_messages_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let len = app.current_chat_messages.len();
+            if len > 0 {
+                let i = app.chat_messages_list_state.selected().unwrap_or(0);
+                app.chat_messages_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            }
+        }
+        _ => {}
+    }
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use discourse_api_rs::{Category, Post};
+use discourse_api_rs::{Category, ChatChannel, ChatMessage, Post};
 use ratatui::widgets::ListState;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -8,6 +8,8 @@ pub enum AppScreen {
     MainScreen,
     TopicView,
     PostView,
+    ChatChannels,
+    ChatMessages,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,6 +72,14 @@ pub struct App {
 
     // Post view state
     pub post_scroll_offset: usize,
+
+    // Chat state
+    pub chat_channels: Vec<ChatChannel>,
+    pub chat_channels_list_state: ListState,
+    pub current_chat_messages: Vec<ChatMessage>,
+    pub chat_messages_list_state: ListState,
+    pub selected_channel_id: Option<u64>,
+    pub last_message_poll: std::time::Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -117,6 +127,12 @@ impl App {
         let mut topic_posts_list_state = ListState::default();
         topic_posts_list_state.select(Some(0));
 
+        let mut chat_channels_list_state = ListState::default();
+        chat_channels_list_state.select(Some(0));
+
+        let mut chat_messages_list_state = ListState::default();
+        chat_messages_list_state.select(Some(0));
+
         Ok(Self {
             screen,
             config,
@@ -135,6 +151,12 @@ impl App {
             current_topic_posts: vec![],
             topic_posts_list_state,
             post_scroll_offset: 0,
+            chat_channels: vec![],
+            chat_channels_list_state,
+            current_chat_messages: vec![],
+            chat_messages_list_state,
+            selected_channel_id: None,
+            last_message_poll: std::time::Instant::now(),
         })
     }
 
