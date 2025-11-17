@@ -183,7 +183,7 @@ dependencies = [
 [[package]]
 name = "discourse-api-rs"
 version = "0.20251116.0"
-source = "git+https://github.com/ducks/discourse-api-rs#ae5aa1c99274aaa2417c4e23cca5fc2327312da1"
+source = "git+https://github.com/ducks/discourse-api-rs#7e57364cbbca3231c0f151e72e44c9ffd5370359"
 dependencies = [
  "reqwest",
  "serde",
@@ -244,7 +244,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1059,7 +1059,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1375,7 +1375,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

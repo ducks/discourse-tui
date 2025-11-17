@@ -10,7 +10,12 @@ use ratatui::{
 pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),  // Header
+            Constraint::Min(0),     // Messages
+            Constraint::Length(3),  // Composer
+            Constraint::Length(1),  // Help
+        ])
         .split(frame.area());
 
     let channel_name = app
@@ -74,10 +79,28 @@ pub fn draw(frame: &mut Frame, app: &App) {
         &mut app.chat_messages_list_state.clone(),
     );
 
-    let help =
-        Line::from(vec![Span::raw("j/k: scroll | r: refresh | Esc: back to channels | q: quit")]);
+    // Composer input
+    let composer_style = if app.chat_composer_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
 
-    frame.render_widget(help, chunks[2]);
+    let composer = ratatui::widgets::Paragraph::new(app.chat_composer_input.as_str())
+        .block(
+            Block::default()
+                .title("Message (i: focus, Enter: send)")
+                .borders(Borders::ALL)
+                .border_style(composer_style),
+        );
+
+    frame.render_widget(composer, chunks[2]);
+
+    let help = Line::from(vec![Span::raw(
+        "j/k: scroll | i: compose | r: refresh | Esc: back | q: quit",
+    )]);
+
+    frame.render_widget(help, chunks[3]);
 }
 
 fn wrap_text(text: &str, max_width: usize) -> String {
