@@ -34,6 +34,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new()?;
+
+    // Auto-select and load forum data on startup
+    if app.config.forums.len() == 1 && app.config.current.selected.is_none() {
+        // Exactly one forum, not selected - auto-select it
+        let forum = app.config.forums[0].clone();
+        app.config.set_current_forum(forum.id.clone());
+        let _ = app.config.save();
+
+        if let Err(e) = load_forum_data(&mut app, &forum).await {
+            eprintln!("Failed to load forum data: {}", e);
+        } else {
+            app.goto_screen(AppScreen::MainScreen);
+        }
+    } else if let Some(current_forum_id) = &app.config.current.selected {
+        // Forum already selected - load its data
+        if let Some(forum) = app.config.forums.iter().find(|f| &f.id == current_forum_id).cloned() {
+            if let Err(e) = load_forum_data(&mut app, &forum).await {
+                eprintln!("Failed to load forum data: {}", e);
+            }
+        }
+    }
+
     let res = run_app(&mut terminal, &mut app).await;
 
     disable_raw_mode()?;
