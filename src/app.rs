@@ -1,3 +1,4 @@
+use crate::config::{Config, Forum};
 use discourse_api_rs::{Category, LatestResponse};
 use ratatui::widgets::ListState;
 
@@ -9,6 +10,8 @@ pub enum PaneFocus {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
+    ForumPicker,
+    AddForum,
     TopicList,
     TopicView,
 }
@@ -49,9 +52,52 @@ pub struct App {
     pub current_filter: ViewFilter,
     pub all_topics: Vec<Topic>,
     pub categories: Vec<Category>,
+    pub config: Config,
+    pub forum_picker_state: ListState,
+    pub add_forum_inputs: AddForumInputs,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AddForumInputs {
+    pub name: String,
+    pub url: String,
+    pub api_key: String,
+    pub username: String,
+    pub active_field: usize, // 0=name, 1=url, 2=api_key, 3=username
 }
 
 impl App {
+    pub fn from_config() -> Result<Self, Box<dyn std::error::Error>> {
+        let config = Config::load()?;
+
+        let mut forum_picker_state = ListState::default();
+        forum_picker_state.select(Some(0));
+
+        // Determine starting screen
+        let screen = if config.forums.is_empty() {
+            Screen::AddForum
+        } else if config.current.selected.is_none() {
+            Screen::ForumPicker
+        } else {
+            Screen::TopicList
+        };
+
+        Ok(Self {
+            screen,
+            focus: PaneFocus::Sidebar,
+            sidebar_state: ListState::default(),
+            topics_state: ListState::default(),
+            sidebar_items: vec![],
+            topics: vec![],
+            current_filter: ViewFilter::AllTopics,
+            all_topics: vec![],
+            categories: vec![],
+            config,
+            forum_picker_state,
+            add_forum_inputs: AddForumInputs::default(),
+        })
+    }
+
     pub fn new() -> Self {
         let mut sidebar_state = ListState::default();
         sidebar_state.select(Some(0));
@@ -71,6 +117,9 @@ impl App {
             current_filter: ViewFilter::AllTopics,
             all_topics,
             categories: vec![],
+            config: Config::default(),
+            forum_picker_state: ListState::default(),
+            add_forum_inputs: AddForumInputs::default(),
         }
     }
 
@@ -121,6 +170,9 @@ impl App {
         // Build sidebar with real categories
         let sidebar_items = Self::create_sidebar_with_categories(&categories);
 
+        let mut forum_picker_state = ListState::default();
+        forum_picker_state.select(Some(0));
+
         Self {
             screen: Screen::TopicList,
             focus: PaneFocus::Sidebar,
@@ -131,6 +183,9 @@ impl App {
             current_filter: ViewFilter::AllTopics,
             all_topics,
             categories,
+            config: Config::default(),
+            forum_picker_state,
+            add_forum_inputs: AddForumInputs::default(),
         }
     }
 
@@ -443,8 +498,142 @@ impl App {
     }
 
     pub fn go_back(&mut self) {
-        if self.screen == Screen::TopicView {
-            self.screen = Screen::TopicList;
+        match self.screen {
+            Screen::TopicView => self.screen = Screen::TopicList,
+            Screen::AddForum => {
+                self.screen = if self.config.forums.is_empty() {
+                    Screen::AddForum // Can't go back if no forums exist
+                } else {
+                    Screen::ForumPicker
+                };
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_char_input(&mut self, c: char) {
+        if self.screen == Screen::AddForum {
+            let field = match self.add_forum_inputs.active_field {
+                0 => &mut self.add_forum_inputs.name,
+                1 => &mut self.add_forum_inputs.url,
+                2 => &mut self.add_forum_inputs.api_key,
+                3 => &mut self.add_forum_inputs.username,
+                _ => return,
+            };
+            field.push(c);
+        } else if self.screen == Screen::ForumPicker && c == 'a' {
+            self.screen = Screen::AddForum;
+            self.add_forum_inputs = AddForumInputs::default();
+        } else if self.screen == Screen::ForumPicker && c == 'd' {
+            self.delete_selected_forum();
+        }
+    }
+
+    pub fn handle_backspace(&mut self) {
+        if self.screen == Screen::AddForum {
+            let field = match self.add_forum_inputs.active_field {
+                0 => &mut self.add_forum_inputs.name,
+                1 => &mut self.add_forum_inputs.url,
+                2 => &mut self.add_forum_inputs.api_key,
+                3 => &mut self.add_forum_inputs.username,
+                _ => return,
+            };
+            field.pop();
+        }
+    }
+
+    pub fn handle_tab(&mut self) {
+        match self.screen {
+            Screen::AddForum => {
+                self.add_forum_inputs.active_field = (self.add_forum_inputs.active_field + 1) % 4;
+            }
+            Screen::TopicList => self.toggle_focus(),
+            _ => {}
+        }
+    }
+
+    pub fn handle_enter(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        match self.screen {
+            Screen::ForumPicker => {
+                if let Some(idx) = self.forum_picker_state.selected() {
+                    if let Some(forum) = self.config.forums.get(idx) {
+                        self.config.set_current_forum(forum.id.clone());
+                        self.config.save()?;
+                        self.screen = Screen::TopicList;
+                        // Will need to load forum data here
+                    }
+                }
+            }
+            Screen::AddForum => {
+                if !self.add_forum_inputs.name.is_empty() && !self.add_forum_inputs.url.is_empty() {
+                    let id = self.add_forum_inputs.name.to_lowercase().replace(' ', "-");
+                    let forum = Forum {
+                        id: id.clone(),
+                        name: self.add_forum_inputs.name.clone(),
+                        url: self.add_forum_inputs.url.clone(),
+                        api_key: if self.add_forum_inputs.api_key.is_empty() {
+                            None
+                        } else {
+                            Some(self.add_forum_inputs.api_key.clone())
+                        },
+                        username: if self.add_forum_inputs.username.is_empty() {
+                            None
+                        } else {
+                            Some(self.add_forum_inputs.username.clone())
+                        },
+                    };
+                    self.config.add_forum(forum);
+                    self.config.set_current_forum(id);
+                    self.config.save()?;
+                    self.screen = Screen::TopicList;
+                    // Will need to load forum data here
+                }
+            }
+            Screen::TopicList => self.select(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn delete_selected_forum(&mut self) {
+        if let Some(idx) = self.forum_picker_state.selected() {
+            if let Some(forum) = self.config.forums.get(idx).cloned() {
+                self.config.remove_forum(&forum.id);
+                let _ = self.config.save();
+
+                // Update selection
+                if self.config.forums.is_empty() {
+                    self.screen = Screen::AddForum;
+                } else if idx >= self.config.forums.len() {
+                    self.forum_picker_state.select(Some(self.config.forums.len() - 1));
+                }
+            }
+        }
+    }
+
+    pub fn handle_navigation(&mut self, down: bool) {
+        match self.screen {
+            Screen::ForumPicker => {
+                let len = self.config.forums.len();
+                if len == 0 {
+                    return;
+                }
+                let i = self.forum_picker_state.selected().unwrap_or(0);
+                let new_i = if down {
+                    if i >= len - 1 { 0 } else { i + 1 }
+                } else {
+                    if i == 0 { len - 1 } else { i - 1 }
+                };
+                self.forum_picker_state.select(Some(new_i));
+            }
+            Screen::TopicList => {
+                if down {
+                    self.next();
+                } else {
+                    self.previous();
+                }
+            }
+            _ => {}
         }
     }
 }
