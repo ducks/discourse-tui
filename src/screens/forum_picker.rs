@@ -1,4 +1,4 @@
-use crate::app_simple::{AddForumState, App, ForumPickerMode};
+use crate::app_simple::{App, ForumPickerMode};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},

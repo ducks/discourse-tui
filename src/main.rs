@@ -104,6 +104,33 @@ async fn load_chat_channels(app: &mut App) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+async fn send_chat_message(
+    app: &mut App,
+    channel_id: u64,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let forum = app
+        .config
+        .get_current_forum()
+        .ok_or("No forum selected")?;
+
+    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+        format!("https://{}", forum.url)
+    } else {
+        forum.url.clone()
+    };
+
+    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+        DiscourseClient::with_api_key(&url, api_key, username)
+    } else {
+        return Err("Chat requires API authentication".into());
+    };
+
+    client.send_chat_message(channel_id, message).await?;
+
+    Ok(())
+}
+
 async fn load_chat_messages(app: &mut App, channel_id: u64) -> Result<(), Box<dyn std::error::Error>> {
     let forum = app
         .config
@@ -690,34 +717,70 @@ async fn handle_chat_channels_input(key: KeyCode, app: &mut App) -> io::Result<(
 }
 
 async fn handle_chat_messages_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    match key {
-        KeyCode::Char('q') => std::process::exit(0),
-        KeyCode::Esc => {
-            app.goto_screen(AppScreen::ChatChannels);
-        }
-        KeyCode::Char('r') => {
-            // Refresh messages
-            if let Some(channel_id) = app.selected_channel_id {
-                if let Err(e) = load_chat_messages(app, channel_id).await {
-                    eprintln!("Failed to refresh messages: {}", e);
+    if app.chat_composer_focused {
+        // Handle composer input
+        match key {
+            KeyCode::Esc => {
+                app.chat_composer_focused = false;
+            }
+            KeyCode::Enter => {
+                // Send message
+                if !app.chat_composer_input.trim().is_empty() {
+                    if let Some(channel_id) = app.selected_channel_id {
+                        let message = app.chat_composer_input.clone();
+                        if let Err(e) = send_chat_message(app, channel_id, &message).await {
+                            eprintln!("Failed to send message: {}", e);
+                        } else {
+                            app.chat_composer_input.clear();
+                            app.chat_composer_focused = false;
+                            // Refresh messages to show our new message
+                            let _ = load_chat_messages(app, channel_id).await;
+                        }
+                    }
                 }
             }
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let len = app.current_chat_messages.len();
-            if len > 0 {
-                let i = app.chat_messages_list_state.selected().unwrap_or(0);
-                app.chat_messages_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+            KeyCode::Backspace => {
+                app.chat_composer_input.pop();
             }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            let len = app.current_chat_messages.len();
-            if len > 0 {
-                let i = app.chat_messages_list_state.selected().unwrap_or(0);
-                app.chat_messages_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            KeyCode::Char(c) => {
+                app.chat_composer_input.push(c);
             }
+            _ => {}
         }
-        _ => {}
+    } else {
+        // Handle navigation
+        match key {
+            KeyCode::Char('q') => std::process::exit(0),
+            KeyCode::Esc => {
+                app.goto_screen(AppScreen::ChatChannels);
+            }
+            KeyCode::Char('i') => {
+                app.chat_composer_focused = true;
+            }
+            KeyCode::Char('r') => {
+                // Refresh messages
+                if let Some(channel_id) = app.selected_channel_id {
+                    if let Err(e) = load_chat_messages(app, channel_id).await {
+                        eprintln!("Failed to refresh messages: {}", e);
+                    }
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = app.current_chat_messages.len();
+                if len > 0 {
+                    let i = app.chat_messages_list_state.selected().unwrap_or(0);
+                    app.chat_messages_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let len = app.current_chat_messages.len();
+                if len > 0 {
+                    let i = app.chat_messages_list_state.selected().unwrap_or(0);
+                    app.chat_messages_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }

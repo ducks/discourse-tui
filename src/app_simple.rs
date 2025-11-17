@@ -80,6 +80,8 @@ pub struct App {
     pub chat_messages_list_state: ListState,
     pub selected_channel_id: Option<u64>,
     pub last_message_poll: std::time::Instant,
+    pub chat_composer_input: String,
+    pub chat_composer_focused: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -157,6 +159,8 @@ impl App {
             chat_messages_list_state,
             selected_channel_id: None,
             last_message_poll: std::time::Instant::now(),
+            chat_composer_input: String::new(),
+            chat_composer_focused: false,
         })
     }
 
