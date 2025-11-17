@@ -7,6 +7,7 @@ pub enum AppScreen {
     ForumPicker,
     MainScreen,
     TopicView,
+    PostView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,6 +67,9 @@ pub struct App {
     pub selected_topic_idx: usize,
     pub current_topic_posts: Vec<Post>,
     pub topic_posts_list_state: ListState,
+
+    // Post view state
+    pub post_scroll_offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -130,6 +134,7 @@ impl App {
             selected_topic_idx: 0,
             current_topic_posts: vec![],
             topic_posts_list_state,
+            post_scroll_offset: 0,
         })
     }
 

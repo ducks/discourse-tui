@@ -47,6 +47,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(loading, chunks[1]);
     } else {
+        // Debug: Check if posts have content
+        let empty_posts = app.current_topic_posts.iter().filter(|p| {
+            p.raw.as_ref().map_or(true, |r| r.trim().is_empty()) &&
+            p.cooked.trim().is_empty()
+        }).count();
+
+        if empty_posts > 0 {
+            eprintln!("Warning: {} posts have no content in topic {}", empty_posts, topic.id);
+        }
         let post_items: Vec<ListItem> = app
             .current_topic_posts
             .iter()
@@ -59,9 +68,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     strip_html(text)
                 };
 
+                // Fallback for empty posts
+                let text = if text.trim().is_empty() {
+                    "[Post content not available]".to_string()
+                } else {
+                    text
+                };
+
+                // Limit text length to prevent extremely long posts from filling screen
+                let preview_text = if text.len() > 1000 {
+                    format!("{}...\n\n[Press SPACE/ENTER to view full post - {} chars total]", &text[..1000], text.len())
+                } else {
+                    text
+                };
+
                 // Wrap text to fit screen width (accounting for borders and padding)
                 let max_width = chunks[1].width.saturating_sub(6) as usize;
-                let wrapped = wrap_text(&text, max_width);
+                let wrapped = wrap_text(&preview_text, max_width);
 
                 let mut lines = vec![
                     Line::from(vec![
@@ -106,7 +129,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer
-    let footer = Paragraph::new("j/k: scroll | Esc: back | q: quit")
+    let footer = Paragraph::new("j/k: scroll | SPACE/ENTER: view post | Esc: back | q: quit")
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, chunks[2]);
 }

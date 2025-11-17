@@ -59,6 +59,8 @@ async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn st
 
     let topic_response = client.get_topic(topic_id).await?;
     app.current_topic_posts = topic_response.post_stream.posts;
+
+    // Always select first post (0) to ensure visibility
     app.topic_posts_list_state.select(Some(0));
 
     Ok(())
@@ -206,6 +208,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 AppScreen::ForumPicker => screens::forum_picker::draw(f, app),
                 AppScreen::MainScreen => screens::main_screen::draw(f, app),
                 AppScreen::TopicView => screens::topic_view::draw(f, app),
+                AppScreen::PostView => screens::post_view::draw(f, app),
             }
         })?;
 
@@ -218,6 +221,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 AppScreen::ForumPicker => handle_forum_picker_input(key.code, app).await?,
                 AppScreen::MainScreen => handle_main_screen_input(key.code, app).await?,
                 AppScreen::TopicView => handle_topic_view_input(key.code, app)?,
+                AppScreen::PostView => handle_post_view_input(key.code, app)?,
             }
         }
     }
@@ -386,7 +390,9 @@ async fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()>
             if app.focus == PaneFocus::Sidebar {
                 if let Some(idx) = app.sidebar_state.selected() {
                     if let Some(filter) = app.sidebar_items.get(idx).and_then(|item| item.filter) {
-                        apply_filter(app, filter);
+                        if let Err(e) = apply_filter(app, filter).await {
+                            eprintln!("Failed to apply filter: {}", e);
+                        }
                     }
                 }
             } else {
@@ -414,6 +420,11 @@ fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
         KeyCode::Esc => {
             app.goto_screen(AppScreen::MainScreen);
         }
+        KeyCode::Char(' ') | KeyCode::Enter => {
+            // Open full post view
+            app.post_scroll_offset = 0;
+            app.goto_screen(AppScreen::PostView);
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             let len = app.current_topic_posts.len();
             if len > 0 {
@@ -433,33 +444,113 @@ fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
     Ok(())
 }
 
-fn apply_filter(app: &mut App, filter: ViewFilter) {
+fn handle_post_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
+    match key {
+        KeyCode::Char('q') => std::process::exit(0),
+        KeyCode::Esc => {
+            app.goto_screen(AppScreen::TopicView);
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.post_scroll_offset = app.post_scroll_offset.saturating_add(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.post_scroll_offset = app.post_scroll_offset.saturating_sub(1);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn apply_filter(app: &mut App, filter: ViewFilter) -> Result<(), Box<dyn std::error::Error>> {
     app.current_filter = filter;
-    app.topics = match filter {
-        ViewFilter::AllTopics => app.all_topics.clone(),
-        ViewFilter::MyPosts => app
-            .all_topics
-            .iter()
-            .filter(|t| t.author == "ducks")
-            .cloned()
-            .collect(),
-        ViewFilter::MyMessages => vec![],
+
+    match filter {
+        ViewFilter::AllTopics => {
+            app.topics = app.all_topics.clone();
+        }
+        ViewFilter::MyPosts => {
+            app.topics = app
+                .all_topics
+                .iter()
+                .filter(|t| t.author == "ducks")
+                .cloned()
+                .collect();
+        }
+        ViewFilter::MyMessages => {
+            app.topics = vec![];
+        }
         ViewFilter::Category(cat_idx) => {
-            if let Some(category) = app.categories.get(cat_idx) {
-                let category_name = &category.name;
-                app.all_topics
+            // Fetch topics for this category from API
+            if let Some(category) = app.categories.get(cat_idx).cloned() {
+                let forum = app
+                    .config
+                    .get_current_forum()
+                    .ok_or("No forum selected")?;
+
+                let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+                    format!("https://{}", forum.url)
+                } else {
+                    forum.url.clone()
+                };
+
+                let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+                    DiscourseClient::with_api_key(&url, api_key, username)
+                } else {
+                    DiscourseClient::new(&url)
+                };
+
+                let category_response = client.get_category_topics(category.id).await?;
+
+                // Convert API topics to TUI topics
+                app.topics = category_response
+                    .topic_list
+                    .topics
                     .iter()
-                    .filter(|t| &t.category == category_name)
-                    .cloned()
-                    .collect()
+                    .map(|api_topic| {
+                        let category_name = api_topic
+                            .category_id
+                            .and_then(|cat_id| {
+                                app.categories
+                                    .iter()
+                                    .find(|c| c.id == cat_id)
+                                    .map(|c| c.name.clone())
+                            })
+                            .unwrap_or_else(|| "uncategorized".to_string());
+
+                        let author = api_topic
+                            .posters
+                            .first()
+                            .and_then(|p| {
+                                category_response
+                                    .users
+                                    .iter()
+                                    .find(|u| u.id == p.user_id)
+                                    .map(|u| u.username.clone())
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        app_simple::Topic {
+                            id: api_topic.id as usize,
+                            title: api_topic.title.clone(),
+                            author,
+                            category: category_name,
+                            replies: api_topic.reply_count as usize,
+                            unread: false,
+                        }
+                    })
+                    .collect();
             } else {
-                app.all_topics.clone()
+                app.topics = vec![];
             }
         }
-        ViewFilter::Tag(_) => app.all_topics.clone(),
-    };
+        ViewFilter::Tag(_) => {
+            app.topics = app.all_topics.clone();
+        }
+    }
 
     if !app.topics.is_empty() {
         app.topics_state.select(Some(0));
     }
+
+    Ok(())
 }
