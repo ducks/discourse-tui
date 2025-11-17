@@ -69,6 +69,9 @@ pub struct App {
     pub selected_topic_idx: usize,
     pub current_topic_posts: Vec<Post>,
     pub topic_posts_list_state: ListState,
+    pub topic_composer_input: String,
+    pub topic_composer_focused: bool,
+    pub topic_reply_to_post_number: Option<u32>,
 
     // Post view state
     pub post_scroll_offset: usize,
@@ -152,6 +155,9 @@ impl App {
             selected_topic_idx: 0,
             current_topic_posts: vec![],
             topic_posts_list_state,
+            topic_composer_input: String::new(),
+            topic_composer_focused: false,
+            topic_reply_to_post_number: None,
             post_scroll_offset: 0,
             chat_channels: vec![],
             chat_channels_list_state,

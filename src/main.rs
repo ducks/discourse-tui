@@ -161,6 +161,34 @@ async fn load_chat_messages(app: &mut App, channel_id: u64) -> Result<(), Box<dy
     Ok(())
 }
 
+async fn create_post_reply(
+    app: &mut App,
+    topic_id: u64,
+    message: &str,
+    reply_to_post_number: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let forum = app
+        .config
+        .get_current_forum()
+        .ok_or("No forum selected")?;
+
+    let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
+        format!("https://{}", forum.url)
+    } else {
+        forum.url.clone()
+    };
+
+    let client = if let (Some(api_key), Some(username)) = (&forum.api_key, &forum.username) {
+        DiscourseClient::with_api_key(&url, api_key, username)
+    } else {
+        return Err("Posting requires API authentication".into());
+    };
+
+    client.create_post(topic_id, message, reply_to_post_number).await?;
+
+    Ok(())
+}
+
 async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std::error::Error>> {
     // Ensure URL has protocol
     let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
@@ -328,7 +356,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 match app.screen {
                     AppScreen::ForumPicker => handle_forum_picker_input(key.code, app).await?,
                     AppScreen::MainScreen => handle_main_screen_input(key.code, app).await?,
-                    AppScreen::TopicView => handle_topic_view_input(key.code, app)?,
+                    AppScreen::TopicView => handle_topic_view_input(key.code, app).await?,
                     AppScreen::PostView => handle_post_view_input(key.code, app)?,
                     AppScreen::ChatChannels => handle_chat_channels_input(key.code, app).await?,
                     AppScreen::ChatMessages => handle_chat_messages_input(key.code, app).await?,
@@ -538,32 +566,81 @@ async fn handle_main_screen_input(key: KeyCode, app: &mut App) -> io::Result<()>
     Ok(())
 }
 
-fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
-    match key {
-        KeyCode::Char('q') => std::process::exit(0),
-        KeyCode::Esc => {
-            app.goto_screen(AppScreen::MainScreen);
-        }
-        KeyCode::Char(' ') | KeyCode::Enter => {
-            // Open full post view
-            app.post_scroll_offset = 0;
-            app.goto_screen(AppScreen::PostView);
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let len = app.current_topic_posts.len();
-            if len > 0 {
-                let i = app.topic_posts_list_state.selected().unwrap_or(0);
-                app.topic_posts_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+async fn handle_topic_view_input(key: KeyCode, app: &mut App) -> io::Result<()> {
+    if app.topic_composer_focused {
+        // Handle composer input
+        match key {
+            KeyCode::Esc => {
+                app.topic_composer_focused = false;
             }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            let len = app.current_topic_posts.len();
-            if len > 0 {
-                let i = app.topic_posts_list_state.selected().unwrap_or(0);
-                app.topic_posts_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            KeyCode::Enter => {
+                // Send reply
+                if !app.topic_composer_input.trim().is_empty() {
+                    let topic_id = app.topics.get(app.selected_topic_idx).map(|t| t.id as u64);
+                    if let Some(topic_id) = topic_id {
+                        let message = app.topic_composer_input.clone();
+                        let reply_to = app.topic_reply_to_post_number;
+
+                        if let Err(e) = create_post_reply(app, topic_id, &message, reply_to).await {
+                            eprintln!("Failed to send reply: {}", e);
+                        } else {
+                            app.topic_composer_input.clear();
+                            app.topic_composer_focused = false;
+                            app.topic_reply_to_post_number = None;
+                            // Refresh topic to show our new post
+                            let _ = load_topic_posts(app, topic_id).await;
+                        }
+                    }
+                }
             }
+            KeyCode::Backspace => {
+                app.topic_composer_input.pop();
+            }
+            KeyCode::Char(c) => {
+                app.topic_composer_input.push(c);
+            }
+            _ => {}
         }
-        _ => {}
+    } else {
+        // Handle navigation
+        match key {
+            KeyCode::Char('q') => std::process::exit(0),
+            KeyCode::Esc => {
+                app.goto_screen(AppScreen::MainScreen);
+            }
+            KeyCode::Char('r') => {
+                // Reply to selected post
+                app.topic_reply_to_post_number = app.topic_posts_list_state.selected()
+                    .and_then(|idx| app.current_topic_posts.get(idx))
+                    .map(|post| post.post_number);
+                app.topic_composer_focused = true;
+            }
+            KeyCode::Char('R') => {
+                // Reply to topic (post #1)
+                app.topic_reply_to_post_number = Some(1);
+                app.topic_composer_focused = true;
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                // Open full post view
+                app.post_scroll_offset = 0;
+                app.goto_screen(AppScreen::PostView);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = app.current_topic_posts.len();
+                if len > 0 {
+                    let i = app.topic_posts_list_state.selected().unwrap_or(0);
+                    app.topic_posts_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let len = app.current_topic_posts.len();
+                if len > 0 {
+                    let i = app.topic_posts_list_state.selected().unwrap_or(0);
+                    app.topic_posts_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }

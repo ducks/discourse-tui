@@ -21,10 +21,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let topic = &app.topics[app.selected_topic_idx];
 
-    // Create header and content areas
+    // Create header, content, composer, and footer areas
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),  // Header
+            Constraint::Min(1),     // Posts
+            Constraint::Length(3),  // Composer
+            Constraint::Length(1),  // Footer
+        ])
         .split(frame.area());
 
     // Header
@@ -128,10 +133,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_stateful_widget(posts, chunks[1], &mut app.topic_posts_list_state);
     }
 
+    // Composer input
+    let composer_style = if app.topic_composer_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+
+    let composer = Paragraph::new(app.topic_composer_input.as_str())
+        .block(
+            Block::default()
+                .title("Reply (r: focus, Enter: send)")
+                .borders(Borders::ALL)
+                .border_style(composer_style),
+        );
+
+    frame.render_widget(composer, chunks[2]);
+
     // Footer
-    let footer = Paragraph::new("j/k: scroll | SPACE/ENTER: view post | Esc: back | q: quit")
+    let footer = Paragraph::new("j/k: scroll | SPACE/ENTER: view post | r: reply to post | R: reply to topic | Esc: back | q: quit")
         .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, chunks[2]);
+    frame.render_widget(footer, chunks[3]);
 }
 
 fn strip_html(html: &str) -> String {
