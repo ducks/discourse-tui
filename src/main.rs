@@ -345,6 +345,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 AppScreen::PostView => screens::post_view::draw(f, app),
                 AppScreen::ChatChannels => screens::chat_channels::draw(f, app),
                 AppScreen::ChatMessages => screens::chat_messages::draw(f, app),
+                AppScreen::Notifications => screens::notifications::draw(f, app),
             }
         })?;
 
@@ -371,6 +372,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                     AppScreen::PostView => handle_post_view_input(key, app)?,
                     AppScreen::ChatChannels => handle_chat_channels_input(key, app).await?,
                     AppScreen::ChatMessages => handle_chat_messages_input(key, app).await?,
+                    AppScreen::Notifications => handle_notifications_input(key, app).await?,
                 }
             }
         }
@@ -529,6 +531,14 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
                 eprintln!("Failed to load chat channels: {}", e);
             } else {
                 app.goto_screen(AppScreen::ChatChannels);
+            }
+        }
+        KeyCode::Char('3') => {
+            // Load notifications and go to notifications view
+            if let Err(e) = load_notifications(app).await {
+                eprintln!("Failed to load notifications: {}", e);
+            } else {
+                app.goto_screen(AppScreen::Notifications);
             }
         }
         KeyCode::Char('5') => {
@@ -972,6 +982,62 @@ async fn handle_chat_messages_input(key: event::KeyEvent, app: &mut App) -> io::
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+async fn load_notifications(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    let forum = app
+        .config
+        .get_current_forum()
+        .ok_or("No forum selected")?;
+
+    let client = create_client(forum);
+    let response = client.get_notifications().await?;
+    app.notifications = response.notifications;
+
+    if !app.notifications.is_empty() {
+        app.notifications_list_state.select(Some(0));
+    }
+
+    Ok(())
+}
+
+async fn handle_notifications_input(key: event::KeyEvent, app: &mut App) -> io::Result<()> {
+    match key.code {
+        KeyCode::Char('q') => std::process::exit(0),
+        KeyCode::Esc => {
+            app.goto_screen(AppScreen::MainScreen);
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let len = app.notifications.len();
+            if len > 0 {
+                let i = app.notifications_list_state.selected().unwrap_or(0);
+                app.notifications_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let len = app.notifications.len();
+            if len > 0 {
+                let i = app.notifications_list_state.selected().unwrap_or(0);
+                app.notifications_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            }
+        }
+        KeyCode::Enter => {
+            // Open the topic related to the notification
+            if let Some(idx) = app.notifications_list_state.selected() {
+                if let Some(notification) = app.notifications.get(idx) {
+                    if let Some(topic_id) = notification.topic_id {
+                        if let Err(e) = load_topic_posts(app, topic_id).await {
+                            eprintln!("Failed to load topic posts: {}", e);
+                        } else {
+                            app.goto_screen(AppScreen::TopicView);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use discourse_api_rs::{Category, ChatChannel, ChatMessage, Post};
+use discourse_api_rs::{Category, ChatChannel, ChatMessage, Notification, Post};
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
 
@@ -11,6 +11,7 @@ pub enum AppScreen {
     PostView,
     ChatChannels,
     ChatMessages,
+    Notifications,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -91,6 +92,10 @@ pub struct App {
     pub chat_composer_input: String,
     pub chat_composer_visible: bool,
     pub chat_composer_insert_mode: bool,
+
+    // Notifications state
+    pub notifications: Vec<Notification>,
+    pub notifications_list_state: ListState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,6 +151,9 @@ impl App {
         let mut chat_messages_list_state = ListState::default();
         chat_messages_list_state.select(Some(0));
 
+        let mut notifications_list_state = ListState::default();
+        notifications_list_state.select(Some(0));
+
         Ok(Self {
             screen,
             config,
@@ -180,6 +188,8 @@ impl App {
             chat_composer_input: String::new(),
             chat_composer_visible: false,
             chat_composer_insert_mode: false,
+            notifications: vec![],
+            notifications_list_state,
         })
     }
 
