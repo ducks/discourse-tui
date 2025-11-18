@@ -58,11 +58,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Topics
     let topics_title = match app.current_filter {
-        ViewFilter::AllTopics => "All Topics",
-        ViewFilter::MyPosts => "My Posts",
-        ViewFilter::MyMessages => "My Messages",
-        ViewFilter::Category(_) => "Category Topics",
-        ViewFilter::Tag(_) => "Tagged Topics",
+        ViewFilter::AllTopics => format!("All Topics (Page {})", app.current_page + 1),
+        ViewFilter::MyPosts => format!("My Posts (Page {})", app.current_page + 1),
+        ViewFilter::MyMessages => format!("My Messages (Page {})", app.current_page + 1),
+        ViewFilter::Category(_) => format!("Category Topics (Page {})", app.current_page + 1),
+        ViewFilter::Tag(_) => format!("Tagged Topics (Page {})", app.current_page + 1),
     };
 
     let topics_items: Vec<ListItem> = app
@@ -107,7 +107,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(frame.area());
 
-    let footer = Paragraph::new("j/k: navigate | Tab: switch pane | Enter: open topic | 5: forum picker | q: quit")
+    let footer = Paragraph::new("j/k: navigate | Tab: switch pane | n/p: next/prev page | Enter: open topic | 5: forum picker | q: quit")
         .style(Style::default().fg(Color::DarkGray));
 
     frame.render_widget(footer, footer_chunks[1]);

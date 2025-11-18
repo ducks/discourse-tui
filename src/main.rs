@@ -103,11 +103,120 @@ async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn st
         .ok_or("No forum selected")?;
 
     let client = create_client(forum);
-    let topic_response = client.get_topic(topic_id).await?;
-    app.current_topic_posts = topic_response.post_stream.posts;
 
-    // Always select first post (0) to ensure visibility
-    app.topic_posts_list_state.select(Some(0));
+    // Get the stream of all post IDs
+    let topic_info = client.get_topic(topic_id).await?;
+    app.current_topic_id = Some(topic_id);
+    app.current_topic_all_post_ids = topic_info.post_stream.stream.clone();
+
+    let stream_len = app.current_topic_all_post_ids.len();
+
+    eprintln!("DEBUG load_topic_posts: stream_len={}", stream_len);
+    if stream_len > 0 {
+        eprintln!("DEBUG load_topic_posts: First 5 post IDs in stream: {:?}", &app.current_topic_all_post_ids[..stream_len.min(5)]);
+        eprintln!("DEBUG load_topic_posts: Last 5 post IDs in stream: {:?}", &app.current_topic_all_post_ids[stream_len.saturating_sub(5)..]);
+    }
+
+    if stream_len == 0 {
+        return Ok(());
+    }
+
+    // Start viewing from the last 20 posts (newest posts are at end of stream)
+    app.current_topic_view_start = stream_len.saturating_sub(20);
+    eprintln!("DEBUG load_topic_posts: Setting view_start to {}", app.current_topic_view_start);
+
+    // Load the current view
+    load_current_post_view(app).await?;
+
+    Ok(())
+}
+
+async fn load_current_post_view(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    let topic_id = app.current_topic_id.ok_or("No topic loaded")?;
+    let forum = app.config.get_current_forum().ok_or("No forum selected")?;
+
+    let stream_len = app.current_topic_all_post_ids.len();
+    let start = app.current_topic_view_start;
+    let end = (start + 20).min(stream_len);
+
+    let post_ids: Vec<u64> = app.current_topic_all_post_ids[start..end].to_vec();
+
+    if post_ids.is_empty() {
+        return Ok(());
+    }
+
+    let client = create_client(forum);
+    let topic_response = client.get_topic_posts(topic_id, Some(post_ids)).await?;
+
+    app.current_topic_posts = topic_response.post_stream.posts;
+    app.current_topic_posts.sort_by_key(|p| p.post_number);
+
+    // Select last post in view (newest post)
+    if !app.current_topic_posts.is_empty() {
+        app.topic_posts_list_state.select(Some(app.current_topic_posts.len() - 1));
+    }
+
+    Ok(())
+}
+
+async fn load_older_posts(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    if app.current_topic_view_start == 0 {
+        return Ok(()); // Already at the beginning (oldest posts)
+    }
+
+    let topic_id = app.current_topic_id.ok_or("No topic loaded")?;
+    let forum = app.config.get_current_forum().ok_or("No forum selected")?;
+
+    // Load previous 20 posts
+    let new_start = app.current_topic_view_start.saturating_sub(20);
+    let post_ids: Vec<u64> = app.current_topic_all_post_ids[new_start..app.current_topic_view_start].to_vec();
+
+    if post_ids.is_empty() {
+        return Ok(());
+    }
+
+    let client = create_client(forum);
+    let topic_response = client.get_topic_posts(topic_id, Some(post_ids)).await?;
+
+    // Add to beginning of list
+    let current_selected = app.topic_posts_list_state.selected().unwrap_or(0);
+    let new_posts_count = topic_response.post_stream.posts.len();
+
+    for post in topic_response.post_stream.posts.into_iter().rev() {
+        app.current_topic_posts.insert(0, post);
+    }
+
+    // Adjust selection to maintain position
+    app.topic_posts_list_state.select(Some(current_selected + new_posts_count));
+    app.current_topic_view_start = new_start;
+
+    Ok(())
+}
+
+async fn load_newer_posts(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    let stream_len = app.current_topic_all_post_ids.len();
+    let current_end = app.current_topic_view_start + app.current_topic_posts.len();
+
+    if current_end >= stream_len {
+        return Ok(()); // Already at the end (newest posts)
+    }
+
+    let topic_id = app.current_topic_id.ok_or("No topic loaded")?;
+    let forum = app.config.get_current_forum().ok_or("No forum selected")?;
+
+    // Load next 20 posts
+    let new_end = (current_end + 20).min(stream_len);
+    let post_ids: Vec<u64> = app.current_topic_all_post_ids[current_end..new_end].to_vec();
+
+    if post_ids.is_empty() {
+        return Ok(());
+    }
+
+    let client = create_client(forum);
+    let topic_response = client.get_topic_posts(topic_id, Some(post_ids)).await?;
+
+    // Add to end of list
+    app.current_topic_posts.extend(topic_response.post_stream.posts);
 
     Ok(())
 }
@@ -213,8 +322,11 @@ fn load_post_images(app: &mut App, post_id: u64) {
 }
 
 async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std::error::Error>> {
+    // Save current focus to restore after loading
+    let saved_focus = app.focus;
+
     let client = create_client(forum);
-    let latest = client.get_latest().await?;
+    let latest = client.get_latest_page(app.current_page).await?;
     let categories = client.get_categories().await?;
 
     // Convert API topics to TUI topics
@@ -316,7 +428,7 @@ async fn load_forum_data(app: &mut App, forum: &Forum) -> Result<(), Box<dyn std
     // Reset states
     app.sidebar_state.select(Some(0));
     app.topics_state.select(Some(0));
-    app.focus = PaneFocus::Sidebar;
+    app.focus = saved_focus;
 
     Ok(())
 }
@@ -544,6 +656,30 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
         KeyCode::Char('5') => {
             app.goto_screen(AppScreen::ForumPicker);
         }
+        KeyCode::Char('n') => {
+            // Next page (only when focused on topics)
+            if app.focus == PaneFocus::Topics {
+                app.current_page += 1;
+                if let Some(forum) = app.config.get_current_forum().cloned() {
+                    if let Err(e) = load_forum_data(app, &forum).await {
+                        eprintln!("Failed to load next page: {}", e);
+                        app.current_page -= 1; // Revert on error
+                    }
+                }
+            }
+        }
+        KeyCode::Char('p') => {
+            // Previous page (only when focused on topics and not on first page)
+            if app.focus == PaneFocus::Topics && app.current_page > 0 {
+                app.current_page -= 1;
+                if let Some(forum) = app.config.get_current_forum().cloned() {
+                    if let Err(e) = load_forum_data(app, &forum).await {
+                        eprintln!("Failed to load previous page: {}", e);
+                        app.current_page += 1; // Revert on error
+                    }
+                }
+            }
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             let (list_state, list_len) = match app.focus {
                 PaneFocus::Sidebar => (&mut app.sidebar_state, app.sidebar_items.len()),
@@ -742,14 +878,31 @@ async fn handle_topic_view_input(key: event::KeyEvent, app: &mut App) -> io::Res
                 let len = app.current_topic_posts.len();
                 if len > 0 {
                     let i = app.topic_posts_list_state.selected().unwrap_or(0);
-                    app.topic_posts_list_state.select(Some(if i >= len - 1 { 0 } else { i + 1 }));
+                    let new_pos = if i >= len - 1 { 0 } else { i + 1 };
+                    app.topic_posts_list_state.select(Some(new_pos));
+
+                    // Auto-load newer posts if scrolling near the end
+                    let stream_len = app.current_topic_all_post_ids.len();
+                    if new_pos >= len.saturating_sub(3) && app.current_topic_view_start + 20 < stream_len {
+                        if let Err(e) = load_newer_posts(app).await {
+                            eprintln!("Failed to auto-load newer posts: {}", e);
+                        }
+                    }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 let len = app.current_topic_posts.len();
                 if len > 0 {
                     let i = app.topic_posts_list_state.selected().unwrap_or(0);
-                    app.topic_posts_list_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                    let new_pos = if i == 0 { len - 1 } else { i - 1 };
+                    app.topic_posts_list_state.select(Some(new_pos));
+
+                    // Auto-load older posts if scrolling near the beginning
+                    if new_pos <= 2 && app.current_topic_view_start > 0 {
+                        if let Err(e) = load_older_posts(app).await {
+                            eprintln!("Failed to auto-load older posts: {}", e);
+                        }
+                    }
                 }
             }
             _ => {}
