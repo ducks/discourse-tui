@@ -24,6 +24,8 @@ A terminal user interface for browsing Discourse forums.
 
 - Browse multiple Discourse instances
 - View topics and posts with raw markdown display
+- Infinite scroll pagination (auto-loads posts when scrolling)
+- Reply to topics and quote posts with vim-style modal composer
 - Category filtering with real API queries
 - Full post view for long content
 - Vim-style keybindings (j/k navigation)
@@ -62,6 +64,7 @@ and switch between them.
 
 **Main Screen (Screen 1)**
 - `j/k` or arrow keys: Navigate topics/sidebar
+- `n/p`: Next/previous page of topics
 - `Tab`: Switch between sidebar and topics
 - `Enter`: Open selected topic or apply filter
 - `5`: Switch to forum picker
@@ -69,10 +72,18 @@ and switch between them.
 - `q`: Quit
 
 **Topic View**
-- `j/k` or arrow keys: Navigate posts
+- `j/k` or arrow keys: Navigate posts (auto-loads more when scrolling near edges)
+- `r`: Reply to topic
+- `q` (on a post): Quote selected post in reply
 - `Space` or `Enter`: View full post
 - `Esc`: Return to main screen
 - `q`: Quit
+
+**Composer (Reply/Quote)**
+- `i`: Enter insert mode to type your message
+- `Esc`: Exit insert mode (or close composer from normal mode)
+- `Enter`: Submit post (from normal mode)
+- Starts in normal mode (vim-style modal editing)
 
 **Post View**
 - `j/k` or arrow keys: Scroll post
