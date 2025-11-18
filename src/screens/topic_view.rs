@@ -34,10 +34,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .split(frame.area());
 
     // Header
-    let header_text = format!(
-        "{} - {} replies",
-        topic.title, topic.replies
-    );
+    let loaded_count = app.current_topic_posts.len();
+    let total_count = app.current_topic_all_post_ids.len();
+    let header_text = if loaded_count < total_count {
+        format!(
+            "{} - {} of {} posts loaded (press 'p' for older, 'n' for newer)",
+            topic.title, loaded_count, total_count
+        )
+    } else {
+        format!(
+            "{} - {} posts (all loaded)",
+            topic.title, loaded_count
+        )
+    };
     let header = Paragraph::new(header_text)
         .block(
             Block::default()

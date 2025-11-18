@@ -61,6 +61,7 @@ pub struct App {
     pub topics_state: ListState,
     pub sidebar_items: Vec<SidebarItem>,
     pub current_filter: ViewFilter,
+    pub current_page: u32,
 
     // Data
     pub topics: Vec<Topic>,
@@ -70,6 +71,9 @@ pub struct App {
     // Topic view state
     pub selected_topic_idx: usize,
     pub current_topic_posts: Vec<Post>,
+    pub current_topic_id: Option<u64>,
+    pub current_topic_all_post_ids: Vec<u64>,
+    pub current_topic_view_start: usize, // Which index in the stream we're viewing from
     pub topic_posts_list_state: ListState,
     pub topic_composer_input: String,
     pub topic_composer_visible: bool,
@@ -165,11 +169,15 @@ impl App {
             topics_state,
             sidebar_items: vec![],
             current_filter: ViewFilter::AllTopics,
+            current_page: 0,
             topics: vec![],
             all_topics: vec![],
             categories: vec![],
             selected_topic_idx: 0,
             current_topic_posts: vec![],
+            current_topic_id: None,
+            current_topic_all_post_ids: vec![],
+            current_topic_view_start: 0,
             topic_posts_list_state,
             topic_composer_input: String::new(),
             topic_composer_visible: false,
