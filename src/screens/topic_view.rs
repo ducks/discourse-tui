@@ -68,9 +68,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             p.cooked.trim().is_empty()
         }).count();
 
-        if empty_posts > 0 {
-            eprintln!("Warning: {} posts have no content in topic {}", empty_posts, topic.id);
-        }
+        // Note: {} posts have no content in topic {} - not logging to avoid UI clutter
+        let _ = empty_posts;
         let post_items: Vec<ListItem> = app
             .current_topic_posts
             .iter()

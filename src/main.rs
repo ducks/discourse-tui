@@ -12,7 +12,28 @@ use crossterm::{
 };
 use discourse_api_rs::DiscourseClient;
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
+use std::sync::OnceLock;
+use std::path::PathBuf;
+
+static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+fn log_debug(msg: &str) {
+    if let Some(path) = LOG_PATH.get() {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "[DEBUG] {}", msg);
+        }
+    }
+}
+
+fn log_error(msg: &str) {
+    if let Some(path) = LOG_PATH.get() {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "[ERROR] {}", msg);
+        }
+    }
+}
 
 fn create_client(forum: &Forum) -> DiscourseClient {
     let url = if !forum.url.starts_with("http://") && !forum.url.starts_with("https://") {
@@ -37,6 +58,14 @@ fn create_client(forum: &Forum) -> DiscourseClient {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize file-based logging
+    if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "discourse-tui") {
+        let data_dir = proj_dirs.data_dir();
+        let _ = std::fs::create_dir_all(data_dir);
+        let log_path = data_dir.join("discourse-tui.log");
+        let _ = LOG_PATH.set(log_path);
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
 
@@ -65,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = app.config.save();
 
         if let Err(e) = load_forum_data(&mut app, &forum).await {
-            eprintln!("Failed to load forum data: {}", e);
+            log_error(&format!("Failed to load forum data: {}", e));
         } else {
             app.goto_screen(AppScreen::MainScreen);
         }
@@ -73,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Forum already selected - load its data
         if let Some(forum) = app.config.forums.iter().find(|f| &f.id == current_forum_id).cloned() {
             if let Err(e) = load_forum_data(&mut app, &forum).await {
-                eprintln!("Failed to load forum data: {}", e);
+                log_error(&format!("Failed to load forum data: {}", e));
             }
         }
     }
@@ -111,10 +140,10 @@ async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn st
 
     let stream_len = app.current_topic_all_post_ids.len();
 
-    eprintln!("DEBUG load_topic_posts: stream_len={}", stream_len);
+    log_debug(&format!("load_topic_posts: stream_len={}", stream_len));
     if stream_len > 0 {
-        eprintln!("DEBUG load_topic_posts: First 5 post IDs in stream: {:?}", &app.current_topic_all_post_ids[..stream_len.min(5)]);
-        eprintln!("DEBUG load_topic_posts: Last 5 post IDs in stream: {:?}", &app.current_topic_all_post_ids[stream_len.saturating_sub(5)..]);
+        log_debug(&format!("load_topic_posts: First 5 post IDs in stream: {:?}", &app.current_topic_all_post_ids[..stream_len.min(5)]));
+        log_debug(&format!("load_topic_posts: Last 5 post IDs in stream: {:?}", &app.current_topic_all_post_ids[stream_len.saturating_sub(5)..]));
     }
 
     if stream_len == 0 {
@@ -123,7 +152,7 @@ async fn load_topic_posts(app: &mut App, topic_id: u64) -> Result<(), Box<dyn st
 
     // Start viewing from the last 20 posts (newest posts are at end of stream)
     app.current_topic_view_start = stream_len.saturating_sub(20);
-    eprintln!("DEBUG load_topic_posts: Setting view_start to {}", app.current_topic_view_start);
+    log_debug(&format!("load_topic_posts: Setting view_start to {}", app.current_topic_view_start));
 
     // Load the current view
     load_current_post_view(app).await?;
@@ -541,7 +570,7 @@ async fn handle_forum_picker_input(key: event::KeyEvent, app: &mut App) -> io::R
 
                         // Load forum data
                         if let Err(e) = load_forum_data(app, &forum).await {
-                            eprintln!("Failed to load forum data: {}", e);
+                            log_error(&format!("Failed to load forum data: {}", e));
                         } else {
                             app.goto_screen(AppScreen::MainScreen);
                         }
@@ -640,7 +669,7 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
         KeyCode::Char('2') => {
             // Load chat channels and go to chat view
             if let Err(e) = load_chat_channels(app).await {
-                eprintln!("Failed to load chat channels: {}", e);
+                log_error(&format!("Failed to load chat channels: {}", e));
             } else {
                 app.goto_screen(AppScreen::ChatChannels);
             }
@@ -648,7 +677,7 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
         KeyCode::Char('3') => {
             // Load notifications and go to notifications view
             if let Err(e) = load_notifications(app).await {
-                eprintln!("Failed to load notifications: {}", e);
+                log_error(&format!("Failed to load notifications: {}", e));
             } else {
                 app.goto_screen(AppScreen::Notifications);
             }
@@ -662,7 +691,7 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
                 app.current_page += 1;
                 if let Some(forum) = app.config.get_current_forum().cloned() {
                     if let Err(e) = load_forum_data(app, &forum).await {
-                        eprintln!("Failed to load next page: {}", e);
+                        log_error(&format!("Failed to load next page: {}", e));
                         app.current_page -= 1; // Revert on error
                     }
                 }
@@ -674,7 +703,7 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
                 app.current_page -= 1;
                 if let Some(forum) = app.config.get_current_forum().cloned() {
                     if let Err(e) = load_forum_data(app, &forum).await {
-                        eprintln!("Failed to load previous page: {}", e);
+                        log_error(&format!("Failed to load previous page: {}", e));
                         app.current_page += 1; // Revert on error
                     }
                 }
@@ -713,7 +742,7 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
                 if let Some(idx) = app.sidebar_state.selected() {
                     if let Some(filter) = app.sidebar_items.get(idx).and_then(|item| item.filter) {
                         if let Err(e) = apply_filter(app, filter).await {
-                            eprintln!("Failed to apply filter: {}", e);
+                            log_error(&format!("Failed to apply filter: {}", e));
                         }
                     }
                 }
@@ -721,7 +750,7 @@ async fn handle_main_screen_input(key: event::KeyEvent, app: &mut App) -> io::Re
                 app.selected_topic_idx = app.topics_state.selected().unwrap_or(0);
                 if let Some(topic) = app.topics.get(app.selected_topic_idx) {
                     if let Err(e) = load_topic_posts(app, topic.id as u64).await {
-                        eprintln!("Failed to load topic posts: {}", e);
+                        log_error(&format!("Failed to load topic posts: {}", e));
                     } else {
                         app.goto_screen(AppScreen::TopicView);
                     }
@@ -772,7 +801,7 @@ async fn handle_topic_view_input(key: event::KeyEvent, app: &mut App) -> io::Res
                         let reply_to = app.topic_reply_to_post_number;
 
                         if let Err(e) = create_post_reply(app, topic_id, &message, reply_to).await {
-                            eprintln!("Failed to send reply: {}", e);
+                            log_error(&format!("Failed to send reply: {}", e));
                         } else {
                             app.topic_composer_input.clear();
                             app.topic_composer_visible = false;
@@ -885,7 +914,7 @@ async fn handle_topic_view_input(key: event::KeyEvent, app: &mut App) -> io::Res
                     let stream_len = app.current_topic_all_post_ids.len();
                     if new_pos >= len.saturating_sub(3) && app.current_topic_view_start + 20 < stream_len {
                         if let Err(e) = load_newer_posts(app).await {
-                            eprintln!("Failed to auto-load newer posts: {}", e);
+                            log_error(&format!("Failed to auto-load newer posts: {}", e));
                         }
                     }
                 }
@@ -900,7 +929,7 @@ async fn handle_topic_view_input(key: event::KeyEvent, app: &mut App) -> io::Res
                     // Auto-load older posts if scrolling near the beginning
                     if new_pos <= 2 && app.current_topic_view_start > 0 {
                         if let Err(e) = load_older_posts(app).await {
-                            eprintln!("Failed to auto-load older posts: {}", e);
+                            log_error(&format!("Failed to auto-load older posts: {}", e));
                         }
                     }
                 }
@@ -1036,7 +1065,7 @@ async fn handle_chat_channels_input(key: event::KeyEvent, app: &mut App) -> io::
                 if let Some(channel) = app.chat_channels.get(idx) {
                     let channel_id = channel.id;
                     if let Err(e) = load_chat_messages(app, channel_id).await {
-                        eprintln!("Failed to load chat messages: {}", e);
+                        log_error(&format!("Failed to load chat messages: {}", e));
                     } else {
                         app.goto_screen(AppScreen::ChatMessages);
                     }
@@ -1081,7 +1110,7 @@ async fn handle_chat_messages_input(key: event::KeyEvent, app: &mut App) -> io::
                     if let Some(channel_id) = app.selected_channel_id {
                         let message = app.chat_composer_input.clone();
                         if let Err(e) = send_chat_message(app, channel_id, &message).await {
-                            eprintln!("Failed to send message: {}", e);
+                            log_error(&format!("Failed to send message: {}", e));
                         } else {
                             app.chat_composer_input.clear();
                             app.chat_composer_visible = false;
@@ -1115,7 +1144,7 @@ async fn handle_chat_messages_input(key: event::KeyEvent, app: &mut App) -> io::
                 // Refresh messages
                 if let Some(channel_id) = app.selected_channel_id {
                     if let Err(e) = load_chat_messages(app, channel_id).await {
-                        eprintln!("Failed to refresh messages: {}", e);
+                        log_error(&format!("Failed to refresh messages: {}", e));
                     }
                 }
             }
@@ -1182,7 +1211,7 @@ async fn handle_notifications_input(key: event::KeyEvent, app: &mut App) -> io::
                 if let Some(notification) = app.notifications.get(idx) {
                     if let Some(topic_id) = notification.topic_id {
                         if let Err(e) = load_topic_posts(app, topic_id).await {
-                            eprintln!("Failed to load topic posts: {}", e);
+                            log_error(&format!("Failed to load topic posts: {}", e));
                         } else {
                             app.goto_screen(AppScreen::TopicView);
                         }
