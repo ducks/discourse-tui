@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "discourse-tui"
-version = "20251117.0.0"
+version = "20260125.0.0"
 dependencies = [
  "crossterm",
  "directories",
