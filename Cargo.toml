@@ -1,6 +1,6 @@
 [package]
 name = "discourse-tui"
-version = "20260125.0.0"
+version = "20260125.0.1"
 edition = "2021"
 authors = ["Jake Goldsborough"]
 description = "Terminal UI for browsing Discourse forums"
