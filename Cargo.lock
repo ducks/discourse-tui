@@ -191,7 +191,9 @@ dependencies = [
 
 [[package]]
 name = "discourse-api-rs"
-version = "20260113.0.6"
+version = "20260125.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "454ceeb5ca6d07b815072d59bc5e1fc4da6fbbffd9b1714428f08711df7ae794"
 dependencies = [
  "reqwest",
  "serde",
@@ -2181,3 +2183,7 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "discourse-api-rs"
+version = "20260125.0.0"
